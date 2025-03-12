@@ -1,3 +1,5 @@
+#![windows_subsystem = "windows"]
+
 use eframe::egui;
 use egui::{Color32, Vec2};
 use ethers::types::H160;
