@@ -12,6 +12,7 @@ use std::time::{Duration, Instant};
 use tokio::runtime::Runtime;
 use tokio::sync::mpsc;
 use tokio::time;
+use egui_extras;
 
 // Monitor structure
 #[derive(Debug, Clone, PartialEq)]
@@ -112,6 +113,21 @@ fn to_beijing_time(timestamp_millis: i64) -> chrono::NaiveDateTime {
     utc_time + chrono::Duration::hours(8)
 }
 
+// 添加新的函数用于格式化side字段，返回更清晰的描述和对应颜色
+fn get_formatted_side(side: &str) -> (&str, Color32) {
+    match side.to_lowercase().as_str() {
+        "buy" => ("Buy", Color32::from_rgb(50, 180, 50)),
+        "sell" => ("Sell", Color32::from_rgb(220, 50, 50)),
+        "long" => ("Long", Color32::from_rgb(50, 180, 50)),
+        "short" => ("Short", Color32::from_rgb(220, 50, 50)),
+        "deposit" => ("Deposit", Color32::from_rgb(50, 150, 150)),
+        "withdraw" => ("Withdraw", Color32::from_rgb(150, 120, 50)),
+        "transfer" | "send" => ("Transfer", Color32::from_rgb(150, 100, 180)),
+        "receive" => ("Receive", Color32::from_rgb(100, 150, 180)),
+        _ => (side, Color32::from_rgb(100, 100, 100)), // Default to original value
+    }
+}
+
 // Monitoring logic
 async fn monitor_address(
     address: String, 
@@ -205,10 +221,24 @@ async fn monitor_address(
                             let beijing_time = to_beijing_time(tx.timestamp);
                             let time_str = beijing_time.format("%Y-%m-%d %H:%M:%S").to_string();
                             
-                            let text = format!("T:{} {} {}", time_str, tx.token, tx.side);
+                            // 获取更友好的操作类型表示
+                            let (side_display, _) = get_formatted_side(&tx.side);
+                            
+                            // 构建更清晰的标题
+                            let text = match tx.side.to_lowercase().as_str() {
+                                "buy" | "long" => format!("[LONG] {} {} {}", time_str, tx.token, side_display),
+                                "sell" | "short" => format!("[SHORT] {} {} {}", time_str, tx.token, side_display),
+                                "deposit" => format!("[DEPOSIT] {} {} {}", time_str, tx.token, side_display),
+                                "withdraw" => format!("[WITHDRAW] {} {} {}", time_str, tx.token, side_display),
+                                "transfer" | "send" => format!("[TRANSFER] {} {} {}", time_str, tx.token, side_display),
+                                "receive" => format!("[RECEIVE] {} {} {}", time_str, tx.token, side_display),
+                                _ => format!("[TRANSACTION] {} {} {}", time_str, tx.token, side_display),
+                            };
+                            
+                            // 构建更详细的描述
                             let desp = format!(
-                                "Address: {}\nToken: {}\nSide: {}\nSize: {}\nPrice: {}\nTime: {}",
-                                address, tx.token, tx.side, tx.size, tx.entry_price, time_str
+                                "Address: {}\nToken: {}\nAction: {}\nSize: {}\nPrice: {}\nTime: {}",
+                                address, tx.token, side_display, tx.size, tx.entry_price, time_str
                             );
                             
                             send_to_all_keys(text, desp, sendkeys.clone()).await;
@@ -413,7 +443,16 @@ impl eframe::App for MonitorApp {
                                                 monitor.address.clone()
                                             };
                                             
-                                            ui.label(format!("{}. {}", i+1, display_addr));
+                                            ui.horizontal(|ui| {
+                                                ui.label(format!("{}. {}", i+1, display_addr));
+                                                
+                                                // 添加复制按钮
+                                                if ui.small_button("📋").on_hover_text("Copy address").clicked() {
+                                                    ui.output_mut(|o| o.copied_text = monitor.address.clone());
+                                                    // 可选：添加复制成功提示
+                                                    // ui.output_mut(|o| o.open_tooltip(egui::Id::new("copy_tooltip"), "Address copied!"));
+                                                }
+                                            });
                                             
                                             // 显示监控类型
                                             ui.label(match monitor.monitor_type {
@@ -484,55 +523,37 @@ impl eframe::App for MonitorApp {
                     
                     ui.add_space(5.0);
                     
-                    // 表格式表头
-                    ui.horizontal(|ui| {
-                        let col_width1 = 180.0;
-                        let col_width2 = 80.0;
-                        
-                        ui.with_layout(egui::Layout::left_to_right(egui::Align::Center).with_main_wrap(false), |ui| {
-                            ui.set_width(col_width1);
-                            ui.label("Time");
-                        });
-                        
-                        ui.with_layout(egui::Layout::left_to_right(egui::Align::Center).with_main_wrap(false), |ui| {
-                            ui.set_width(col_width2);
-                            ui.label("Token");
-                        });
-                        
-                        ui.with_layout(egui::Layout::left_to_right(egui::Align::Center).with_main_wrap(false), |ui| {
-                            ui.set_width(col_width2);
-                            ui.label("Side");
-                        });
-                        
-                        ui.with_layout(egui::Layout::left_to_right(egui::Align::Center).with_main_wrap(false), |ui| {
-                            ui.set_width(col_width2);
-                            ui.label("Size");
-                        });
-                        
-                        ui.with_layout(egui::Layout::left_to_right(egui::Align::Center).with_main_wrap(false), |ui| {
-                            ui.set_width(col_width2);
-                            ui.label("Leverage");
-                        });
-                        
-                        ui.with_layout(egui::Layout::left_to_right(egui::Align::Center).with_main_wrap(false), |ui| {
-                            ui.set_width(col_width2);
-                            ui.label("Price");
-                        });
-                    });
-                    
-                    ui.separator();
-                    
-                    // 交易列表
-                    egui::ScrollArea::vertical()
-                        .auto_shrink([false; 2])
-                        .stick_to_bottom(true)
-                        .show(ui, |ui| {
+                    // 修改表格显示方式，确保不会换行显示
+                    egui::ScrollArea::horizontal().show(ui, |ui| {
+                        let table = egui_extras::TableBuilder::new(ui)
+                            .striped(true)
+                            .resizable(true)
+                            .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
+                            .column(egui_extras::Column::auto().at_least(180.0)) // 时间
+                            .column(egui_extras::Column::auto().at_least(80.0))  // 代币
+                            .column(egui_extras::Column::auto().at_least(100.0)) // 操作类型
+                            .column(egui_extras::Column::auto().at_least(80.0))  // 数量
+                            .column(egui_extras::Column::auto().at_least(80.0))  // 杠杆
+                            .column(egui_extras::Column::auto().at_least(100.0)) // 价格
+                            .min_scrolled_height(0.0);
+
+                        table.header(20.0, |mut header| {
+                            header.col(|ui| { ui.strong("Time"); });
+                            header.col(|ui| { ui.strong("Token"); });
+                            header.col(|ui| { ui.strong("Action"); });
+                            header.col(|ui| { ui.strong("Size"); });
+                            header.col(|ui| { ui.strong("Leverage"); });
+                            header.col(|ui| { ui.strong("Price"); });
+                        })
+                        .body(|mut body| {
                             let txs = self.transactions.lock().unwrap();
+                            let row_height = 24.0;
                             
                             if txs.is_empty() {
-                                ui.add_space(20.0);
-                                ui.centered_and_justified(|ui| {
-                                    ui.label("No transactions recorded yet");
+                                body.row(row_height, |mut row| {
+                                    row.col(|ui| {
+                                        ui.label("No transaction records yet");
+                                    });
                                 });
                                 return;
                             }
@@ -542,52 +563,22 @@ impl eframe::App for MonitorApp {
                                 let time = to_beijing_time(tx.timestamp);
                                 let time_str = time.format("%Y-%m-%d %H:%M:%S").to_string();
                                 
-                                egui::Frame::none()
-                                    .fill(Color32::from_rgb(245, 245, 250))
-                                    .inner_margin(egui::style::Margin::same(8.0))
-                                    .rounding(egui::Rounding::same(4.0))
-                                    .show(ui, |ui| {
-                                        let col_width1 = 180.0;
-                                        let col_width2 = 80.0;
-                                        
-                                        ui.with_layout(egui::Layout::left_to_right(egui::Align::Center).with_main_wrap(false), |ui| {
-                                            ui.set_width(col_width1);
-                                            ui.label(time_str);
-                                        });
-                                        
-                                        ui.with_layout(egui::Layout::left_to_right(egui::Align::Center).with_main_wrap(false), |ui| {
-                                            ui.set_width(col_width2);
-                                            ui.label(&tx.token);
-                                        });
-                                        
-                                        ui.with_layout(egui::Layout::left_to_right(egui::Align::Center).with_main_wrap(false), |ui| {
-                                            ui.set_width(col_width2);
-                                            let side_color = if tx.side == "long" || tx.side == "buy" {
-                                                Color32::from_rgb(50, 150, 50)
-                                            } else {
-                                                Color32::from_rgb(180, 50, 50)
-                                            };
-                                            ui.colored_label(side_color, &tx.side);
-                                        });
-                                        
-                                        ui.with_layout(egui::Layout::left_to_right(egui::Align::Center).with_main_wrap(false), |ui| {
-                                            ui.set_width(col_width2);
-                                            ui.label(format!("{:.4}", tx.size));
-                                        });
-                                        
-                                        ui.with_layout(egui::Layout::left_to_right(egui::Align::Center).with_main_wrap(false), |ui| {
-                                            ui.set_width(col_width2);
-                                            ui.label(format!("{:.2}x", tx.leverage));
-                                        });
-                                        
-                                        ui.with_layout(egui::Layout::left_to_right(egui::Align::Center).with_main_wrap(false), |ui| {
-                                            ui.set_width(col_width2);
-                                            ui.label(format!("{:.4}", tx.entry_price));
-                                        });
+                                body.row(row_height, |mut row| {
+                                    row.col(|ui| { ui.label(time_str); });
+                                    row.col(|ui| { ui.label(&tx.token); });
+                                    
+                                    row.col(|ui| { 
+                                        let (side_text, side_color) = get_formatted_side(&tx.side);
+                                        ui.colored_label(side_color, side_text); 
                                     });
-                                ui.add_space(4.0);
+                                    
+                                    row.col(|ui| { ui.label(format!("{:.4}", tx.size)); });
+                                    row.col(|ui| { ui.label(format!("{:.2}x", tx.leverage)); });
+                                    row.col(|ui| { ui.label(format!("{:.4}", tx.entry_price)); });
+                                });
                             }
                         });
+                    });
                 });
         });
     }

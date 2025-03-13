@@ -31,5 +31,6 @@ tokio-tungstenite = {version = "0.20.0", features = ["native-tls"]}
 uuid = {version = "1.6.1", features = ["v4"]}
 eframe = "0.21.0"
 egui = "0.21.0"
+egui_extras = "0.21.0"
 regex = "1.5"
 serde_urlencoded = "0.7"
